@@ -1,0 +1,18 @@
+<?php
+unset($CFG);
+global $CFG;
+$CFG = new stdClass();
+
+$CFG->dbtype    = 'mysqli';
+$CFG->dblibrary = 'native';
+$CFG->dbhost    = '{{ moodle_db_host }}';
+$CFG->dbname    = '{{ moodle_db_name }}';
+$CFG->dbuser    = '{{ moodle_db_user }}';
+$CFG->dbpass    = '{{ moodle_db_password }}';
+$CFG->prefix    = 'mdl_';
+
+$CFG->wwwroot   = '{{ moodle_siteurl }}';
+$CFG->dataroot  = '{{ moodle_datadir }}';
+$CFG->directorypermissions = 02770;
+
+require_once(__DIR__ . '/lib/setup.php');

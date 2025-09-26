@@ -1,0 +1,5 @@
+---
+# 役割の中心ロジックは site_web.yml 側に寄せているため、ここは空でも可。
+# 構成を roles で厳密に分ける運用にするなら、site_web.yml の tasks をこちらに移してもOK。
+- debug:
+    msg: "roles/moodle/tasks/main.yml は空（site_web.yml で構築実施）"

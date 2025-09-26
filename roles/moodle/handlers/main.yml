@@ -1,0 +1,5 @@
+---
+# 使わない場合は空でOK。site_web.yml の handlers を使っているため、ここは補助。
+- name: noop
+  debug:
+    msg: "handlers placeholder"

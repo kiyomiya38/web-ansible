@@ -1,0 +1,20 @@
+# AWS リージョンは user_data から -e aws_region=... で渡す（デフォルトは Osaka）
+aws_region: "{{ aws_region | default('ap-northeast-3') }}"
+
+# ---- SSM Parameter Store から取得 ----
+moodle_siteurl:  "{{ lookup('amazon.aws.aws_ssm', '/moodle/alb/url',  region=aws_region) }}"
+moodle_db_host:  "{{ lookup('amazon.aws.aws_ssm', '/moodle/db/host', region=aws_region) }}"
+moodle_db_name:  "{{ lookup('amazon.aws.aws_ssm', '/moodle/db/name', region=aws_region) }}"
+moodle_db_user:  "{{ lookup('amazon.aws.aws_ssm', '/moodle/db/user', region=aws_region) }}"
+moodle_efs_id:   "{{ lookup('amazon.aws.aws_ssm', '/moodle/efs/id',  region=aws_region) }}"
+
+# ---- Secrets Manager から取得（戻り値は dict）----
+moodle_db_password: >-
+  {{ (lookup('amazon.aws.aws_secret', '/moodle/db/password', region=aws_region)).get('SecretString') }}
+
+# ディレクトリ・バージョンなど
+moodle_wwwroot: "/var/www/moodle"
+moodle_datadir: "/var/moodledata"      # EFS マウントターゲット
+moodle_branch:  "MOODLE_401_STABLE"    # 必要に応じて変更
+moodle_web_user:  "www-data"
+moodle_web_group: "www-data"
