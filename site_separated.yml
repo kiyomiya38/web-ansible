@@ -1,0 +1,194 @@
+---
+# === Play 1: DBサーバ（別EC2）にMariaDBを構築 ===
+- name: Provision DB (MariaDB on separate EC2)
+  hosts: db
+  become: true
+  vars_files:
+    - group_vars/moodle.yml
+
+  tasks:
+    - name: Install MariaDB server & client
+      apt:
+        name:
+          - mariadb-server
+          - mariadb-client
+        state: present
+        update_cache: true
+
+    - name: Ensure MariaDB service is enabled and running
+      service:
+        name: mariadb
+        state: started
+        enabled: true
+
+    - name: Drop MariaDB config for Moodle (innodb/charset/tuning)
+      template:
+        src: templates/mariadb_moodle.cnf.j2
+        dest: /etc/mysql/mariadb.conf.d/99-moodle.cnf
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Restart MariaDB
+
+    - name: Ensure python3-pymysql is present (for mysql_* modules)
+      apt:
+        name: python3-pymysql
+        state: present
+
+    - name: Create database ({{ db_name }})
+      community.mysql.mysql_db:
+        name: "{{ db_name }}"
+        state: present
+        login_host: "127.0.0.1"
+        login_unix_socket: /var/run/mysqld/mysqld.sock
+
+    - name: Create application user and grant privileges
+      community.mysql.mysql_user:
+        name: "{{ db_user }}"
+        password: "{{ db_password }}"
+        host: "%"                 # 最小化ならWebのプライベートCIDR/SGに限定を推奨
+        priv: "{{ db_name }}.*:ALL"
+        state: present
+        login_unix_socket: /var/run/mysqld/mysqld.sock
+
+  handlers:
+    - name: Restart MariaDB
+      service:
+        name: mariadb
+        state: restarted
+
+# === Play 2: Webサーバ（別EC2）にMoodle/Nginx/PHPを構築 ===
+- name: Provision Moodle Web (Nginx + PHP-FPM + Moodle)
+  hosts: web
+  become: true
+  vars_files:
+    - group_vars/moodle.yml
+
+  vars:
+    mysql_socket: /var/run/mysqld/mysqld.sock
+
+  tasks:
+    - name: Install packages (nginx, php-fpm, php extensions, curl, unzip)
+      apt:
+        name:
+          - nginx
+          - php-fpm
+          - php-mysql
+          - php-xml
+          - php-zip
+          - php-curl
+          - php-gd
+          - php-intl
+          - php-mbstring
+          - php-soap
+          - php-xmlrpc
+          - unzip
+          - curl
+        state: present
+        update_cache: true
+
+    - name: Ensure web dirs
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: "{{ moodle_web_user }}"
+        group: "{{ moodle_web_group }}"
+        mode: "02775"
+      loop:
+        - "{{ moodle_www_root }}"
+        - "{{ moodle_data_root }}"
+
+    - name: Download & extract Moodle if missing
+      shell: |
+        if [ ! -f "{{ moodle_www_root }}/index.php" ]; then
+          curl -L -o /tmp/moodle.tgz "{{ moodle_tarball_url }}"
+          tar -xzf /tmp/moodle.tgz -C "{{ moodle_www_root }}" --strip-components=1
+          chown -R {{ moodle_web_user }}:{{ moodle_web_group }} "{{ moodle_www_root }}"
+        fi
+      args:
+        executable: /bin/bash
+
+    - name: Get PHP major.minor version
+      command: php -r 'echo PHP_MAJOR_VERSION.".".PHP_MINOR_VERSION;'
+      register: php_ver
+      changed_when: false
+
+    - name: Determine PHP-FPM service name
+      set_fact:
+        php_fpm_service: "php{{ php_ver.stdout }}-fpm"
+
+    - name: Drop PHP overrides
+      template:
+        src: templates/php.ini.j2
+        dest: "/etc/php/{{ php_ver.stdout }}/fpm/conf.d/99-moodle.ini"
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Restart PHP-FPM
+
+    - name: Drop Nginx vhost
+      template:
+        src: templates/nginx_moodle.conf.j2
+        dest: /etc/nginx/sites-available/moodle
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Enable Nginx vhost
+      file:
+        src: /etc/nginx/sites-available/moodle
+        dest: /etc/nginx/sites-enabled/moodle
+        state: link
+      notify: Reload Nginx
+
+    - name: Remove default Nginx site if exists
+      file:
+        path: /etc/nginx/sites-enabled/default
+        state: absent
+      notify: Reload Nginx
+
+    # === ここから db1 のIPを正しく取得して /etc/hosts に登録（一本化 & delegate_facts 有効化）===
+    - name: Gather facts from db1 to learn its private IP
+      setup:
+        gather_subset:
+          - network
+      delegate_to: db1
+      delegate_facts: true
+      run_once: true
+
+    - name: Compute db1 private IP from gathered facts
+      set_fact:
+        db1_ip: >-
+          {{ hostvars['db1'].ansible_default_ipv4.address
+             | default((hostvars['db1'].ansible_all_ipv4_addresses | default([])) | first) }}
+      run_once: true
+      failed_when: db1_ip is not defined or db1_ip == ""
+
+    - name: Ensure DB hostname is resolvable on web host (/etc/hosts -> db1)
+      become: true
+      lineinfile:
+        path: /etc/hosts
+        create: yes
+        regexp: '^\S+\s+db1$'
+        line: "{{ db1_ip }} db1"
+        state: present
+    # === ここまで ===
+
+    - name: Ensure Moodle config.php present (DB接続を外部に設定)
+      template:
+        src: templates/config.php.j2
+        dest: "{{ moodle_www_root }}/config.php"
+        owner: "{{ moodle_web_user }}"
+        group: "{{ moodle_web_group }}"
+        mode: "0640"
+
+  handlers:
+    - name: Restart PHP-FPM
+      service:
+        name: "{{ php_fpm_service }}"
+        state: restarted
+
+    - name: Reload Nginx
+      service:
+        name: nginx
+        state: reloaded
