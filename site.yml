@@ -56,6 +56,30 @@
         opts: defaults,_netdev
         state: mounted
 
+    # ここから追加 —— マウント後に所有権/権限を確実化
+    - name: Ensure dataroot ownership on EFS
+      file:
+        path: "{{ moodle_datadir }}"
+        state: directory
+        owner: "{{ moodle_web_user }}"
+        group: "{{ moodle_web_group }}"
+        mode: "02770"
+
+    - name: Ensure common subdirs for Moodle dataroot
+      file:
+        path: "{{ moodle_datadir }}/{{ item }}"
+        state: directory
+        owner: "{{ moodle_web_user }}"
+        group: "{{ moodle_web_group }}"
+        mode: "02770"
+      loop:
+        - cache
+        - localcache
+        - sessions
+        - temp
+        - trashdir
+        - filedir
+        - lang
     - name: Checkout Moodle from GitHub
       git:
         repo: "https://github.com/moodle/moodle.git"
