@@ -10,19 +10,25 @@ $CFG->dbname    = '{{ moodle_db_name }}';
 $CFG->dbuser    = '{{ moodle_db_user }}';
 $CFG->dbpass    = '{{ moodle_db_password }}';
 $CFG->prefix    = 'mdl_';
-$CFG->dboptions = array(
-    'dbpersist'   => 0,
-    'dbsocket'    => '',
-    'dbport'      => '{{ moodle_db_port | default("3306") }}',
-    'dbcollation' => '{{ moodle_db_collation | default("utf8mb4_0900_ai_ci") }}'
-);
 
 $CFG->wwwroot   = '{{ moodle_siteurl }}';
 $CFG->dataroot  = '{{ moodle_datadir }}';
 $CFG->directorypermissions = 02770;
 
-/* Behind ALB/ELB (TLS terminated at ALB) */
-$CFG->reverseproxy = 1;
-$CFG->sslproxy     = 1;
+/* ★ ここから：ALB(リバースプロキシ)配下用設定 */
+$CFG->reverseproxy = true;
+$CFG->sslproxy = {{ 'true' if (moodle_siteurl | regex_search('^https://')) else 'false' }};
+
+/* 信頼するプロキシIP(CIDR) — ALB からの接続元IPを許可
+   AWSではALB→EC2の接続元はVPC内のプライベートIPになるため、RFC1918を既定で許可します。
+   必要に応じてVPCのCIDRやALB用サブネットCIDRに絞ってください。 */
+$CFG->reverseproxyaddresses = [
+{% for cidr in (moodle_reverseproxy_cidrs | default(['10.0.0.0/8','172.16.0.0/12','192.168.0.0/16'])) %}
+    '{{ cidr }}'{% if not loop.last %},{% endif %}
+{% endfor %}
+];
+/* ★ ここまで */
+/* 補足：Nginx 側では X-Forwarded-For/Proto/Host/Port を fastcgi_param で PHP に渡す設定を
+   既に追加済みであることが前提です。 */
 
 require_once(__DIR__ . '/lib/setup.php');
