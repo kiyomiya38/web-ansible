@@ -1,25 +1,37 @@
+# roles/moodle/templates/nginx_moodle.conf.j2
+
 server {
-    listen 80 default_server;
-    server_name _;
+  listen 80 default_server;
+  server_name _;
 
-    root {{ moodle_wwwroot }};
-    index index.php index.html;
+  root {{ moodle_wwwroot }};
+  index index.php index.html;
 
-    client_max_body_size 64M;
+  client_max_body_size 64m;
 
-    location / {
-        try_files $uri $uri/ /index.php?$query_string;
-    }
+  access_log /var/log/nginx/moodle.access.log;
+  error_log  /var/log/nginx/moodle.error.log;
 
-    location ~ \.php$ {
-        include snippets/fastcgi-php.conf;
-        # Ubuntu 24.04 などでは php{{ php_ver.stdout }}-fpm.sock が標準
-        fastcgi_pass unix:/run/php/php{{ php_ver.stdout }}-fpm.sock;
-    }
+  # 既存: 静的ファイルがなければ index.php へ
+  location / {
+    try_files $uri $uri/ /index.php?$query_string;
+  }
 
-    location ~* \.(?:ico|css|js|gif|jpe?g|png)$ {
-        try_files $uri $uri/ /index.php?$query_string;
-        expires max;
-        log_not_found off;
-    }
+  # PHP への渡し
+  location ~ \.php$ {
+    include snippets/fastcgi-php.conf;                      # Ubuntu の標準スニペット
+    fastcgi_pass unix:/run/php/php{{ php_ver.stdout }}-fpm.sock;
+    fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+
+    # ★重要: ALB の X-Forwarded-* を PHP に渡す
+    fastcgi_param HTTP_X_FORWARDED_FOR   $proxy_add_x_forwarded_for;
+    fastcgi_param HTTP_X_FORWARDED_PROTO $http_x_forwarded_proto;
+    fastcgi_param HTTP_X_FORWARDED_HOST  $host;
+    fastcgi_param HTTP_X_FORWARDED_PORT  $http_x_forwarded_port;
+  }
+
+  # 隠しファイルは拒否
+  location ~* /\. {
+    deny all;
+  }
 }
