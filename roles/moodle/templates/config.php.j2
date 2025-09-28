@@ -10,9 +10,19 @@ $CFG->dbname    = '{{ moodle_db_name }}';
 $CFG->dbuser    = '{{ moodle_db_user }}';
 $CFG->dbpass    = '{{ moodle_db_password }}';
 $CFG->prefix    = 'mdl_';
+$CFG->dboptions = array(
+    'dbpersist'   => 0,
+    'dbsocket'    => '',
+    'dbport'      => '{{ moodle_db_port | default("3306") }}',
+    'dbcollation' => '{{ moodle_db_collation | default("utf8mb4_0900_ai_ci") }}'
+);
 
 $CFG->wwwroot   = '{{ moodle_siteurl }}';
 $CFG->dataroot  = '{{ moodle_datadir }}';
 $CFG->directorypermissions = 02770;
+
+/* Behind ALB/ELB (TLS terminated at ALB) */
+$CFG->reverseproxy = 1;
+$CFG->sslproxy     = 1;
 
 require_once(__DIR__ . '/lib/setup.php');
