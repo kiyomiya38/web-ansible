@@ -141,7 +141,7 @@
 
     - name: Nginx vhost for Moodle
       ansible.builtin.template:
-        src: templates/nginx/moodle.conf.j2
+        src: templates/nginx_moodle.conf.j2
         dest: /etc/nginx/sites-available/moodle.conf
         owner: root
         group: root

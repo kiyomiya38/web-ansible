@@ -1,0 +1,39 @@
+; Managed by Ansible - php-moodle.ini.j2
+; Tuned for Moodle
+
+[PHP]
+; Nginx + PHP-FPM の推奨
+cgi.fix_pathinfo = 0
+
+; リソース
+memory_limit = 256M
+max_execution_time = 120
+max_input_vars = 5000
+
+; アップロード
+file_uploads = On
+upload_max_filesize = 512M
+post_max_size = 512M
+max_file_uploads = 50
+sys_temp_dir = {{ moodle_datadir }}/temp
+upload_tmp_dir = {{ moodle_datadir }}/temp
+
+; セッションをEFS配下に
+session.save_handler = files
+session.save_path = "{{ moodle_datadir }}/sessions"
+
+; OPcache（本番向け）
+opcache.enable = 1
+opcache.enable_cli = 1
+opcache.validate_timestamps = 1
+opcache.revalidate_freq = 60
+opcache.max_accelerated_files = 10000
+opcache.memory_consumption = 128
+opcache.interned_strings_buffer = 16
+
+; realpath cache
+realpath_cache_size = 4096k
+realpath_cache_ttl = 600
+
+; 必要なら有効化
+; date.timezone = Asia/Tokyo

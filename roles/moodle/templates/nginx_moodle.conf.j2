@@ -7,23 +7,23 @@ server {
   root {{ moodle_wwwroot }};
   index index.php index.html;
 
+  # PHP側の post_max_size / upload_max_filesize と合わせる
   client_max_body_size 64m;
 
   access_log /var/log/nginx/moodle.access.log;
   error_log  /var/log/nginx/moodle.error.log;
 
-  # 既存: 静的ファイルがなければ index.php へ
+  # 静的が無ければ index.php へ
   location / {
     try_files $uri $uri/ /index.php?$query_string;
   }
 
   # PHP への渡し
   location ~ \.php$ {
-    include snippets/fastcgi-php.conf;                      # Ubuntu の標準スニペット
-    fastcgi_pass unix:/run/php/php{{ php_ver.stdout }}-fpm.sock;
-    fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+    include snippets/fastcgi-php.conf;   # Ubuntu標準の推奨設定（SCRIPT_FILENAME含む）
+    fastcgi_pass unix:/run/php/php{{ php_minor }}-fpm.sock;
 
-    # ★重要: ALB の X-Forwarded-* を PHP に渡す
+    # ALBのForwardedヘッダをPHPへ（$_SERVER['HTTP_X_FORWARDED_*']）
     fastcgi_param HTTP_X_FORWARDED_FOR   $proxy_add_x_forwarded_for;
     fastcgi_param HTTP_X_FORWARDED_PROTO $http_x_forwarded_proto;
     fastcgi_param HTTP_X_FORWARDED_HOST  $host;
