@@ -56,30 +56,15 @@
         opts: defaults,_netdev
         state: mounted
 
-    # ここから追加 —— マウント後に所有権/権限を確実化
-    - name: Ensure dataroot ownership on EFS
+    # ← 追加：EFS をマウントした「後」にもう一度所有権/権限を適用
+    - name: Ensure ownership/perm on mounted moodledata (EFS)
       file:
         path: "{{ moodle_datadir }}"
         state: directory
         owner: "{{ moodle_web_user }}"
         group: "{{ moodle_web_group }}"
-        mode: "02770"
+        mode: "0775"
 
-    - name: Ensure common subdirs for Moodle dataroot
-      file:
-        path: "{{ moodle_datadir }}/{{ item }}"
-        state: directory
-        owner: "{{ moodle_web_user }}"
-        group: "{{ moodle_web_group }}"
-        mode: "02770"
-      loop:
-        - cache
-        - localcache
-        - sessions
-        - temp
-        - trashdir
-        - filedir
-        - lang
     - name: Checkout Moodle from GitHub
       git:
         repo: "https://github.com/moodle/moodle.git"
@@ -136,6 +121,15 @@
         mode: "0640"
       notify: restart services
 
+    # ← 追加：ALBヘルスチェック用の静的エンドポイント
+    - name: Create static health check endpoint
+      copy:
+        dest: "{{ moodle_wwwroot }}/healthz.html"
+        content: "ok\n"
+        owner: "{{ moodle_web_user }}"
+        group: "{{ moodle_web_group }}"
+        mode: "0644"
+
     - name: Ensure Moodle cron (every minute)
       cron:
         name: "Moodle cron"
@@ -144,16 +138,15 @@
         job: "PHP_INI_SCAN_DIR=/etc/php/{{ php_ver.stdout }}/fpm/conf.d php {{ moodle_wwwroot }}/admin/cli/cron.php >/dev/null 2>&1"
 
   handlers:
-    - name: restart php-fpm
-      listen: "restart services"
-      service:
-        name: "php{{ php_ver.stdout }}-fpm"
-        state: restarted
-        enabled: true
-
-    - name: restart nginx
-      listen: "restart services"
-      service:
-        name: nginx
-        state: reloaded
-        enabled: true
+    - name: restart services
+      block:
+        - name: Restart PHP-FPM
+          service:
+            name: "php{{ php_ver.stdout }}-fpm"
+            state: restarted
+            enabled: true
+        - name: Reload Nginx
+          service:
+            name: nginx
+            state: reloaded
+            enabled: true
