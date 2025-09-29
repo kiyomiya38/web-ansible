@@ -1,5 +1,3 @@
-# roles/moodle/templates/nginx_moodle.conf.j2
-
 server {
   listen 80 default_server;
   server_name _;
@@ -7,31 +5,31 @@ server {
   root {{ moodle_wwwroot }};
   index index.php index.html;
 
-  # PHP側の post_max_size / upload_max_filesize と合わせる
   client_max_body_size 64m;
 
   access_log /var/log/nginx/moodle.access.log;
   error_log  /var/log/nginx/moodle.error.log;
 
-  # 静的が無ければ index.php へ
+  # Static first, then front controller
   location / {
     try_files $uri $uri/ /index.php?$query_string;
   }
 
-  # PHP への渡し
+  # PHP via php-fpm (socket)
   location ~ \.php$ {
-    include snippets/fastcgi-php.conf;   # Ubuntu標準の推奨設定（SCRIPT_FILENAME含む）
+    include snippets/fastcgi-php.conf;
     fastcgi_pass unix:/run/php/php{{ php_minor }}-fpm.sock;
+    fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
 
-    # ALBのForwardedヘッダをPHPへ（$_SERVER['HTTP_X_FORWARDED_*']）
+    # Forwarded headers from ALB → PHP
     fastcgi_param HTTP_X_FORWARDED_FOR   $proxy_add_x_forwarded_for;
     fastcgi_param HTTP_X_FORWARDED_PROTO $http_x_forwarded_proto;
     fastcgi_param HTTP_X_FORWARDED_HOST  $host;
     fastcgi_param HTTP_X_FORWARDED_PORT  $http_x_forwarded_port;
   }
 
-  # 隠しファイルは拒否
-  location ~* /\. {
+  # Hide dotfiles
+  location ~* /\.\w {
     deny all;
   }
 }

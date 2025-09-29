@@ -1,69 +1,61 @@
 ---
 - name: Provision Moodle web node (RDS/EFS, ansible-pull)
   hosts: localhost
-  become: true
+  connection: local
   gather_facts: yes
 
   vars:
-    # 既存の group_vars を尊重しつつデフォルトだけ定義（不要な上書きはしません）
-    moodle_wwwroot: "{{ moodle_wwwroot | default('/var/www/moodle') }}"
-    moodle_datadir: "{{ moodle_datadir | default('/var/moodledata') }}"
-    moodle_branch:  "{{ moodle_branch  | default('MOODLE_401_STABLE') }}"
-    moodle_web_user:  "{{ moodle_web_user  | default('www-data') }}"
-    moodle_web_group: "{{ moodle_web_group | default('www-data') }}"
+    # ← moodle_* は group_vars/all.yml を使う。ここでは触らない
+    php_packages:
+      - nginx
+      - git
+      - nfs-common
+      - php-fpm
+      - php-mysql
+      - php-xml
+      - php-curl
+      - php-zip
+      - php-gd
+      - php-intl
+      - php-soap
+      - php-xmlrpc
+      - php-mbstring
 
   pre_tasks:
     - name: Ensure base packages (nginx, php, git, nfs)
       ansible.builtin.apt:
-        update_cache: yes
-        name:
-          - git
-          - nginx
-          - unzip
-          - nfs-common
-          - php-fpm
-          - php-cli
-          - php-mysql
-          - php-xml
-          - php-mbstring
-          - php-gd
-          - php-intl
-          - php-zip
-          - php-curl
+        name: "{{ php_packages }}"
         state: present
+        update_cache: yes
+      become: yes
 
     - name: Detect PHP minor version (8.x)
-      ansible.builtin.command: php -r 'echo PHP_MAJOR_VERSION.".".PHP_MINOR_VERSION;'
+      ansible.builtin.command:
+        cmd: "php -r 'echo PHP_MAJOR_VERSION.\".\".PHP_MINOR_VERSION;'"
       register: php_ver
       changed_when: false
+      failed_when: false
 
     - name: Set php_minor/php_fpm_service facts
       ansible.builtin.set_fact:
-        php_minor: "{{ php_ver.stdout | default('8.3') }}"
-        php_fpm_service: "php{{ (php_ver.stdout | default('8.3')) }}-fpm"
+        php_minor: "{{ php_ver.stdout }}"
+        php_fpm_service: "php{{ php_ver.stdout }}-fpm"
 
-    # 変数の自己参照ループ回避：ここで「実効のDBホスト」を決定
     - name: Resolve DB host (effective)
       ansible.builtin.set_fact:
         db_host_effective: >-
-          {{ moodle_db_host
-             | default(moodle_db_host_env
-             | default(moodle_db_host_ssm
-             | default(moodle_db_host_alt
-             | default('')))) }}
+          {{ (moodle_db_host | default('')) or moodle_db_host_env or moodle_db_host_ssm or moodle_db_host_alt }}
 
     - name: Show resolved inputs (for troubleshooting only)
       ansible.builtin.debug:
-        verbosity: 1
         msg:
-          - "aws_region={{ aws_region | default('n/a') }}"
+          - "aws_region={{ aws_region }}"
           - "php_minor={{ php_minor }}"
-          - "moodle_db_host_env={{ moodle_db_host_env | default('') }}"
-          - "moodle_db_host_ssm={{ moodle_db_host_ssm | default('') }}"
-          - "moodle_db_host_alt={{ moodle_db_host_alt | default('') }}"
-          - "db_host_effective={{ db_host_effective | default('') }}"
+          - "moodle_db_host_env={{ moodle_db_host_env }}"
+          - "moodle_db_host_ssm={{ moodle_db_host_ssm }}"
+          - "moodle_db_host_alt={{ moodle_db_host_alt }}"
+          - "db_host_effective={{ db_host_effective }}"
 
-  tasks:
     - name: Ensure moodledata dir exists
       ansible.builtin.file:
         path: "{{ moodle_datadir }}"
@@ -71,141 +63,127 @@
         owner: "{{ moodle_web_user }}"
         group: "{{ moodle_web_group }}"
         mode: "0775"
+      become: yes
 
     - name: Ensure EFS line in /etc/fstab
       ansible.builtin.lineinfile:
         path: /etc/fstab
-        regexp: "^{{ moodle_efs_id }}.efs.{{ aws_region }}.amazonaws.com:/\\s+{{ moodle_datadir }}\\s+nfs4\\s"
-        line: "{{ moodle_efs_id }}.efs.{{ aws_region }}.amazonaws.com:/ {{ moodle_datadir }} nfs4 defaults,_netdev 0 0"
+        line: "{{ moodle_efs_id }}.efs.{{ aws_region }}.amazonaws.com:/  {{ moodle_datadir }}  nfs4  defaults,_netdev  0  0"
         state: present
-      when: moodle_efs_id is defined and moodle_efs_id|length > 0
+      when: moodle_efs_id is defined and moodle_efs_id | length > 0
+      become: yes
 
     - name: Mount EFS (idempotent)
       ansible.posix.mount:
-        path: "{{ moodle_datadir }}"
         src: "{{ moodle_efs_id }}.efs.{{ aws_region }}.amazonaws.com:/"
+        path: "{{ moodle_datadir }}"
         fstype: nfs4
         opts: defaults,_netdev
         state: mounted
-      when: moodle_efs_id is defined and moodle_efs_id|length > 0
+      when: moodle_efs_id is defined and moodle_efs_id | length > 0
+      become: yes
 
-    - name: Ensure dataroot ownership on EFS
-      ansible.builtin.file:
-        path: "{{ moodle_datadir }}"
-        state: directory
-        owner: "{{ moodle_web_user }}"
-        group: "{{ moodle_web_group }}"
-        mode: "02770"
-
-    - name: Ensure common subdirs for Moodle dataroot
-      ansible.builtin.file:
-        path: "{{ moodle_datadir }}/{{ item }}"
-        state: directory
-        owner: "{{ moodle_web_user }}"
-        group: "{{ moodle_web_group }}"
-        mode: "02770"
-      loop:
-        - cache
-        - localcache
-        - sessions
-        - temp
-        - trashdir
-        - filedir
-        - lang
-
-    - name: Ensure /var/www exists
-      ansible.builtin.file:
-        path: /var/www
-        state: directory
-        owner: "{{ moodle_web_user }}"
-        group: "{{ moodle_web_group }}"
-        mode: "0755"
-
-    - name: Ensure Moodle dir exists and ownership
+    - name: Ensure web root exists and owned by web user
       ansible.builtin.file:
         path: "{{ moodle_wwwroot }}"
         state: directory
         owner: "{{ moodle_web_user }}"
         group: "{{ moodle_web_group }}"
         mode: "0755"
+      become: yes
 
-    # --- git の「dubious ownership」回避（system レベル） ---
-    - name: Check system git safe.directory list
-      ansible.builtin.command: git config --system --get-all safe.directory
-      register: git_safedir_list
+    - name: Pre-configure git safe.directory (system level) for webroot
+      ansible.builtin.command:
+        cmd: "git config --system --add safe.directory {{ moodle_wwwroot }}"
       changed_when: false
-      failed_when: false
+      become: yes
 
-    - name: Add system-level safe.directory for Moodle
-      ansible.builtin.command: git config --system --add safe.directory {{ moodle_wwwroot }}
-      when: git_safedir_list.rc != 0 or (moodle_wwwroot not in git_safedir_list.stdout_lines)
+    - name: Pre-configure git safe.directory (system level) for default path
+      ansible.builtin.command:
+        cmd: "git config --system --add safe.directory /var/www/moodle"
+      changed_when: false
+      become: yes
 
-    - name: Checkout Moodle from GitHub (as www-data)
-      become: true
-      become_user: "{{ moodle_web_user }}"
+    - name: Checkout Moodle from GitHub
       ansible.builtin.git:
         repo: "https://github.com/moodle/moodle.git"
         dest: "{{ moodle_wwwroot }}"
         version: "{{ moodle_branch }}"
-        update: yes
         force: yes
-        accept_hostkey: yes
+        update: yes
+      become: yes
+      become_user: "{{ moodle_web_user }}"
 
-    - name: Ensure ownership/perm on Moodle dir (recursive)
-      ansible.builtin.file:
-        path: "{{ moodle_wwwroot }}"
-        owner: "{{ moodle_web_user }}"
-        group: "{{ moodle_web_group }}"
-        mode: "0755"
-        recurse: yes
-
-    # --- テンプレート配置（src は "templates/" を付けない：重複検索を防止） ---
-    - name: php.ini for Moodle (FPM)
+  tasks:
+    - name: php.ini for Moodle
       ansible.builtin.template:
-        src: "php-moodle.ini.j2"
-        dest: "/etc/php/{{ php_minor }}/fpm/conf.d/90-moodle.ini"
+        src: "roles/moodle/templates/php-moodle.ini.j2"
+        dest: "/etc/php/{{ php_minor }}/fpm/conf.d/99-moodle.ini"
         owner: root
         group: root
         mode: "0644"
       notify: restart services
+      become: yes
 
-    - name: Nginx vhost for Moodle
+    - name: Configure PHP timezone for CLI and FPM
+      ansible.builtin.lineinfile:
+        path: "/etc/php/{{ php_minor }}/{{ item }}/php.ini"
+        regexp: '^;?date\.timezone\s*='
+        line: "date.timezone = Asia/Tokyo"
+        backrefs: yes
+      loop: [ "cli", "fpm" ]
+      notify: restart services
+      become: yes
+
+    - name: Ensure nginx conf for moodle
       ansible.builtin.template:
-        src: "nginx_moodle.conf.j2"
+        src: "roles/moodle/templates/nginx_moodle.conf.j2"
         dest: "/etc/nginx/sites-available/moodle.conf"
         owner: root
         group: root
         mode: "0644"
       notify: restart services
+      become: yes
 
-    - name: Enable vhost
+    - name: Enable nginx site (symlink)
       ansible.builtin.file:
         src: "/etc/nginx/sites-available/moodle.conf"
         dest: "/etc/nginx/sites-enabled/moodle.conf"
         state: link
+        force: yes
       notify: restart services
+      become: yes
 
-    - name: Disable default vhost
-      ansible.builtin.file:
-        path: "/etc/nginx/sites-enabled/default"
-        state: absent
-      notify: restart services
+    - name: Nginx config test
+      ansible.builtin.command: nginx -t
+      changed_when: false
+      become: yes
 
-    - name: Render config.php (RDS/EFS)
+    - name: Render Moodle config.php
       ansible.builtin.template:
-        src: "config.php.j2"
+        src: "roles/moodle/templates/config.php.j2"
         dest: "{{ moodle_wwwroot }}/config.php"
         owner: "{{ moodle_web_user }}"
         group: "{{ moodle_web_group }}"
         mode: "0640"
       vars:
-        dbhost:   "{{ db_host_effective }}"
-        dbname:   "{{ moodle_db_name }}"
-        dbuser:   "{{ moodle_db_user }}"
-        dbpass:   "{{ moodle_db_password }}"
-        dataroot: "{{ moodle_datadir }}"
-        wwwroot:  "{{ moodle_siteurl | default('') }}"
-      notify: restart services
+        # ここでテンプレートの moodle_db_host に確定値を注入
+        moodle_db_host: "{{ db_host_effective }}"
+      become: yes
+
+    - name: Ensure PHP-FPM is enabled and started
+      ansible.builtin.service:
+        name: "{{ php_fpm_service }}"
+        state: started
+        enabled: yes
+      become: yes
+
+    - name: Ensure nginx is enabled and started
+      ansible.builtin.service:
+        name: nginx
+        state: started
+        enabled: yes
+      become: yes
 
   handlers:
     - name: Restart PHP-FPM
@@ -213,9 +191,11 @@
       ansible.builtin.service:
         name: "{{ php_fpm_service }}"
         state: restarted
+      become: yes
 
     - name: Reload Nginx
       listen: restart services
       ansible.builtin.service:
         name: nginx
         state: reloaded
+      become: yes
