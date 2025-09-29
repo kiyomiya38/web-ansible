@@ -51,7 +51,7 @@
           db_host: "{{ moodle_db_host }}"
           efs_id: "{{ moodle_efs_id }}"
           siteurl: "{{ moodle_siteurl | default('') }}"
-      verbosity: 1
+        verbosity: 1
 
   tasks:
     - name: Ensure dataroot directory exists
