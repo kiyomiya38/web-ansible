@@ -9,9 +9,19 @@ moodle_db_name:  "{{ lookup('amazon.aws.aws_ssm', '/moodle/db/name', region=aws_
 moodle_db_user:  "{{ lookup('amazon.aws.aws_ssm', '/moodle/db/user', region=aws_region, on_missing='warn') }}"
 moodle_efs_id:   "{{ lookup('amazon.aws.aws_ssm', '/moodle/efs/id',  region=aws_region, on_missing='warn') }}"
 
-# ---- Secrets Manager から取得（戻り値は dict）----
+# Secrets Manager: /moodle/db/password
+# 文字列を想定。もしJSONで入れている場合は自動でpasswordキーを拾う。
+moodle_db_password_raw: "{{ lookup('amazon.aws.aws_secret',
+                                   '/moodle/db/password',
+                                   region=aws_region,
+                                   on_missing='warn',
+                                   on_denied='warn') | default('', true) }}"
+
+# JSONなら .password を、そうでなければ生文字列を使う
 moodle_db_password: >-
-  {{ (lookup('amazon.aws.aws_secret', '/moodle/db/password', region=aws_region) | default({}, true)).get('SecretString', '') }}
+  {{ (moodle_db_password_raw | default('', true) | regex_search('^\\s*\\{'))
+      and ((moodle_db_password_raw | from_json).password | default(moodle_db_password_raw, true))
+      or moodle_db_password_raw }}
 
 # ---- 環境変数や -e での上書きも許可 ----
 moodle_db_host_env: "{{ lookup('ansible.builtin.env', 'MOODLE_DB_HOST', default='') }}"
