@@ -153,6 +153,13 @@
         force: yes
       notify: restart services
       become: yes
+    
+    - name: Disable default nginx site (avoid duplicate default_server)
+      ansible.builtin.file:
+        path: /etc/nginx/sites-enabled/default
+        state: absent
+      become: yes
+      notify: restart services
 
     - name: Nginx config test
       ansible.builtin.command: nginx -t
