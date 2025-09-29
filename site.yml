@@ -22,6 +22,7 @@
 
     - name: Show resolved inputs (for troubleshooting only)
       ansible.builtin.debug:
+        verbosity: 1
         msg:
           aws_region: "{{ aws_region }}"
           moodle_siteurl: "{{ moodle_siteurl | default('') }}"
@@ -29,7 +30,6 @@
           moodle_db_name: "{{ moodle_db_name | default('') }}"
           moodle_db_user: "{{ moodle_db_user | default('') }}"
           moodle_efs_id: "{{ moodle_efs_id | default('') }}"
-      verbosity: 0
 
   tasks:
     - name: Ensure base packages
@@ -165,7 +165,6 @@
         minute: "*"
         job: "/usr/bin/php {{ moodle_wwwroot }}/admin/cli/cron.php > /dev/null 2>&1"
 
-    # 参考：DBホストが空なら警告（失敗にはしない）
     - name: Warn when DB host is empty (non-fatal)
       ansible.builtin.debug:
         msg: "WARNING: moodle_db_host が未解決です。SSMや環境変数(MOODLE_DB_HOST)で渡してください。"
