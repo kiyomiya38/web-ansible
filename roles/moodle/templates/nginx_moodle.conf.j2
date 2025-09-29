@@ -1,4 +1,5 @@
 server {
+  # ← ここを default_server にする（この1台で80番のデフォルトを取る）
   listen 80 default_server;
   server_name _;
 
@@ -10,26 +11,26 @@ server {
   access_log /var/log/nginx/moodle.access.log;
   error_log  /var/log/nginx/moodle.error.log;
 
-  # Static first, then front controller
+  # 静的が無ければ PHP へ
   location / {
     try_files $uri $uri/ /index.php?$query_string;
   }
 
-  # PHP via php-fpm (socket)
+  # PHP へ渡す
   location ~ \.php$ {
     include snippets/fastcgi-php.conf;
     fastcgi_pass unix:/run/php/php{{ php_minor }}-fpm.sock;
     fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
 
-    # Forwarded headers from ALB → PHP
+    # ALB 由来のヘッダを PHP に渡す
     fastcgi_param HTTP_X_FORWARDED_FOR   $proxy_add_x_forwarded_for;
     fastcgi_param HTTP_X_FORWARDED_PROTO $http_x_forwarded_proto;
     fastcgi_param HTTP_X_FORWARDED_HOST  $host;
     fastcgi_param HTTP_X_FORWARDED_PORT  $http_x_forwarded_port;
   }
 
-  # Hide dotfiles
-  location ~* /\.\w {
+  # 隠しファイル拒否
+  location ~* /\. {
     deny all;
   }
 }
