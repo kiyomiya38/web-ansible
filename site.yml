@@ -16,15 +16,28 @@
       changed_when: false
       failed_when: false
 
-    - name: Set php_minor fact
+    - name: Set php_minor fact (fallback to 8.3)
       ansible.builtin.set_fact:
-        php_minor: "{{ phpver.stdout | default('8.3') }}"
+        php_minor: "{{ (phpver.stdout | default('', true)) | ternary(phpver.stdout, '8.3') }}"
+
+    - name: Resolve DB host with precedence (-e > ENV > /moodle/db/host > /moodle/rds/endpoint)
+      ansible.builtin.set_fact:
+        moodle_db_host: >-
+          {{
+            (
+              (moodle_db_host is defined and (moodle_db_host | length > 0) and moodle_db_host)
+              or moodle_db_host_env
+              or moodle_db_host_ssm
+              or moodle_db_host_alt
+            )
+          }}
 
     - name: Show resolved inputs (for troubleshooting only)
       ansible.builtin.debug:
         verbosity: 1
         msg:
           aws_region: "{{ aws_region }}"
+          php_minor: "{{ php_minor }}"
           moodle_siteurl: "{{ moodle_siteurl | default('') }}"
           moodle_db_host: "{{ moodle_db_host | default('') }}"
           moodle_db_name: "{{ moodle_db_name | default('') }}"
