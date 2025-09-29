@@ -29,6 +29,6 @@ moodle_db_host_env: "{{ lookup('ansible.builtin.env', 'MOODLE_DB_HOST', default=
 # ディレクトリ・バージョンなど
 moodle_wwwroot: "/var/www/moodle"
 moodle_datadir: "/var/moodledata"      # EFS マウントターゲット
-moodle_branch:  "MOODLE_401_STABLE"    # 必要に応じて変更
+moodle_branch:  "MOODLE_405_STABLE"    # 必要に応じて変更
 moodle_web_user:  "www-data"
 moodle_web_group: "www-data"
