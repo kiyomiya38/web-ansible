@@ -28,6 +28,7 @@ server {
     # ここを「常にHTTPS扱い」に固定（暫定対処）
     fastcgi_param HTTP_X_FORWARDED_PROTO https;
     fastcgi_param HTTP_X_FORWARDED_PORT  443;
+    fastcgi_param SERVER_PORT 443;
     fastcgi_param HTTPS                  on;
   }
 
