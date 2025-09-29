@@ -1,19 +1,73 @@
-# AWS リージョンは user_data から -e aws_region=... で渡す（デフォルトは Osaka）
+# ===== group_vars/all.yml =====
+# AWS リージョンは user_data の -e aws_region=... が優先。未指定なら Osaka
 aws_region: "{{ aws_region | default('ap-northeast-3') }}"
 
-# ---- SSM Parameter Store から取得 ----
-moodle_siteurl:  "{{ lookup('amazon.aws.aws_ssm', '/moodle/alb/url',  region=aws_region) }}"
-moodle_db_host:  "{{ lookup('amazon.aws.aws_ssm', '/moodle/db/host', region=aws_region) }}"
-moodle_db_name:  "{{ lookup('amazon.aws.aws_ssm', '/moodle/db/name', region=aws_region) }}"
-moodle_db_user:  "{{ lookup('amazon.aws.aws_ssm', '/moodle/db/user', region=aws_region) }}"
-moodle_efs_id:   "{{ lookup('amazon.aws.aws_ssm', '/moodle/efs/id',  region=aws_region) }}"
+# ---- SSM Parameter Store から取得（見つからなくても致命的にせず warn/skip）----
+# ※ amazon.aws.aws_ssm -> amazon.aws.ssm_parameter に置換（リダイレクト警告を消す）
+moodle_siteurl: >-
+  {{ lookup('amazon.aws.ssm_parameter', '/moodle/alb/url',
+            region=aws_region, on_missing='warn') | default('', true) }}
 
-# ---- Secrets Manager から取得（戻り値は文字列）----
-moodle_db_password: "{{ lookup('amazon.aws.aws_secret', '/moodle/db/password', region=aws_region) }}"
+# DBホスト候補：/moodle/db/host と 代替 /moodle/rds/endpoint、どちらも無ければ空
+moodle_db_host_ssm: >-
+  {{ lookup('amazon.aws.ssm_parameter', '/moodle/db/host',
+            region=aws_region, on_missing='skip') | default('', true) }}
+moodle_db_host_alt: >-
+  {{ lookup('amazon.aws.ssm_parameter', '/moodle/rds/endpoint',
+            region=aws_region, on_missing='skip') | default('', true) }}
 
-# ディレクトリ・バージョンなど
+moodle_db_name: >-
+  {{ lookup('amazon.aws.ssm_parameter', '/moodle/db/name',
+            region=aws_region, on_missing='warn') | default('', true) }}
+moodle_db_user: >-
+  {{ lookup('amazon.aws.ssm_parameter', '/moodle/db/user',
+            region=aws_region, on_missing='warn') | default('', true) }}
+moodle_efs_id: >-
+  {{ lookup('amazon.aws.ssm_parameter', '/moodle/efs/id',
+            region=aws_region, on_missing='warn') | default('', true) }}
+
+# ---- Secrets Manager から取得（戻り値は dict）----
+# ※ プラグイン名を amazon.aws.secretsmanager_secret に統一
+#    無ければ env や -e で代替できるように後段で合成
+moodle_db_password_secret: >-
+  {{ (lookup('amazon.aws.secretsmanager_secret', '/moodle/db/password',
+             region=aws_region) | default({}, true)).get('SecretString', '') }}
+
+# ---- 環境変数や -e での上書きも許可 ----
+moodle_db_host_env: "{{ lookup('ansible.builtin.env', 'MOODLE_DB_HOST', default='') }}"
+moodle_db_password_env: "{{ lookup('ansible.builtin.env', 'MOODLE_DB_PASSWORD', default='') }}"
+
+# 実際に使う DB ホスト
+# 優先度: ① -e moodle_db_host=... ② 環境変数 ③ /moodle/db/host ④ /moodle/rds/endpoint
+# （グループ変数内で self 参照しても、-e の方が優先度が高いので問題ありません）
+moodle_db_host: >-
+  {{ (moodle_db_host is defined and moodle_db_host) | default('', true)
+     or moodle_db_host_env
+     or moodle_db_host_ssm
+     or moodle_db_host_alt }}
+
+# 実際に使う DB パスワード
+# 優先度: ① -e moodle_db_password=... ② 環境変数 ③ Secrets Manager
+moodle_db_password: >-
+  {{ (moodle_db_password is defined and moodle_db_password) | default('', true)
+     or moodle_db_password_env
+     or moodle_db_password_secret }}
+
+# 追加の DB 設定（必要ならテンプレで使用）
+moodle_db_port: 3306
+moodle_db_prefix: "mdl_"
+
+# ---- ディレクトリ・バージョンなど ----
 moodle_wwwroot: "/var/www/moodle"
 moodle_datadir: "/var/moodledata"      # EFS マウントターゲット
-moodle_branch:  "MOODLE_401_STABLE"    # 必要に応じて変更
+moodle_branch:  "MOODLE_401_STABLE"
 moodle_web_user:  "www-data"
 moodle_web_group: "www-data"
+
+# ---- 逆プロキシ（ALB 経由）関連：config.php.j2 で使用 ----
+moodle_reverseproxy: true
+moodle_sslproxy: true
+moodle_reverseproxyaddresses:
+  - "10.0.0.0/8"
+  - "172.16.0.0/12"
+  - "192.168.0.0/16"

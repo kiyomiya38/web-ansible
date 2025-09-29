@@ -1,39 +1,58 @@
+---
 - name: Provision Moodle web node (RDS/EFS, ansible-pull)
   hosts: localhost
   connection: local
   become: true
+  gather_facts: yes
+
   vars_files:
     - group_vars/all.yml
 
   pre_tasks:
+    - name: Detect PHP minor version (8.x)
+      ansible.builtin.command: >
+        php -r 'echo PHP_MAJOR_VERSION.".".PHP_MINOR_VERSION;'
+      register: phpver
+      changed_when: false
+      failed_when: false
+
+    - name: Set php_minor fact
+      ansible.builtin.set_fact:
+        php_minor: "{{ phpver.stdout | default('8.3') }}"
+
+    - name: Show resolved inputs (for troubleshooting only)
+      ansible.builtin.debug:
+        msg:
+          aws_region: "{{ aws_region }}"
+          moodle_siteurl: "{{ moodle_siteurl | default('') }}"
+          moodle_db_host: "{{ moodle_db_host | default('') }}"
+          moodle_db_name: "{{ moodle_db_name | default('') }}"
+          moodle_db_user: "{{ moodle_db_user | default('') }}"
+          moodle_efs_id: "{{ moodle_efs_id | default('') }}"
+      verbosity: 0
+
+  tasks:
     - name: Ensure base packages
-      apt:
+      ansible.builtin.apt:
         name:
+          - git
           - nginx
+          - nfs-common
           - php-fpm
-          - php-mysql
-          - php-xml
-          - php-gd
+          - php-cli
           - php-curl
-          - php-zip
+          - php-gd
           - php-intl
           - php-mbstring
-          - nfs-common
-          - unzip
-          - git
-          - python3-boto3          # ← SSM/Secrets の lookup に必須
+          - php-mysql
+          - php-xml
+          - php-zip
         state: present
-        update_cache: true
+        update_cache: yes
+      notify: [restart php-fpm, restart nginx]
 
-    - name: Detect PHP minor version (8.x)
-      shell: "php -r 'echo PHP_MAJOR_VERSION.\".\".PHP_MINOR_VERSION;'"
-      register: php_ver
-      changed_when: false
-      failed_when: php_ver.stdout is not match('^8\\.')
-
-    # EFS マウント準備
     - name: Ensure moodledata dir exists
-      file:
+      ansible.builtin.file:
         path: "{{ moodle_datadir }}"
         state: directory
         owner: "{{ moodle_web_user }}"
@@ -41,112 +60,126 @@
         mode: "0775"
 
     - name: Ensure EFS line in /etc/fstab
-      lineinfile:
+      ansible.builtin.lineinfile:
         path: /etc/fstab
-        regexp: '^.+\.efs\.{{ aws_region }}\.amazonaws\.com:/\s+{{ moodle_datadir }}\s+'
+        create: yes
         line: "{{ moodle_efs_id }}.efs.{{ aws_region }}.amazonaws.com:/ {{ moodle_datadir }} nfs4 defaults,_netdev 0 0"
         state: present
+      when: moodle_efs_id | length > 0
 
-  tasks:
     - name: Mount EFS (idempotent)
-      mount:
+      ansible.posix.mount:
         path: "{{ moodle_datadir }}"
         src: "{{ moodle_efs_id }}.efs.{{ aws_region }}.amazonaws.com:/"
         fstype: nfs4
         opts: defaults,_netdev
         state: mounted
+      when: moodle_efs_id | length > 0
 
-    # ← 追加：EFS をマウントした「後」にもう一度所有権/権限を適用
-    - name: Ensure ownership/perm on mounted moodledata (EFS)
-      file:
+    - name: Ensure dataroot ownership on EFS
+      ansible.builtin.file:
         path: "{{ moodle_datadir }}"
         state: directory
         owner: "{{ moodle_web_user }}"
         group: "{{ moodle_web_group }}"
-        mode: "0775"
+        mode: "02770"
+
+    - name: Ensure common subdirs for Moodle dataroot
+      ansible.builtin.file:
+        path: "{{ moodle_datadir }}/{{ item }}"
+        state: directory
+        owner: "{{ moodle_web_user }}"
+        group: "{{ moodle_web_group }}"
+        mode: "02770"
+      loop:
+        - cache
+        - localcache
+        - sessions
+        - temp
+        - trashdir
+        - filedir
+        - lang
 
     - name: Checkout Moodle from GitHub
-      git:
-        repo: "https://github.com/moodle/moodle.git"
+      ansible.builtin.git:
+        repo: https://github.com/moodle/moodle.git
         dest: "{{ moodle_wwwroot }}"
         version: "{{ moodle_branch }}"
-        force: yes
-      notify: restart services
+        update: yes
+      notify: [restart php-fpm, restart nginx]
 
     - name: Ensure ownership/perm on Moodle dir
-      file:
+      ansible.builtin.file:
         path: "{{ moodle_wwwroot }}"
         state: directory
         owner: "{{ moodle_web_user }}"
         group: "{{ moodle_web_group }}"
         mode: "0755"
-        recurse: true
+        recurse: yes
 
     - name: php.ini for Moodle
-      copy:
-        dest: "/etc/php/{{ php_ver.stdout }}/fpm/conf.d/90-moodle.ini"
+      ansible.builtin.template:
+        src: templates/php-moodle.ini.j2
+        dest: "/etc/php/{{ php_minor }}/fpm/conf.d/90-moodle.ini"
+        owner: root
+        group: root
         mode: "0644"
-        content: |
-          post_max_size = 64M
-          upload_max_filesize = 64M
-          max_input_vars = 5000
-      notify: restart services
+      notify: restart php-fpm
 
     - name: Nginx vhost for Moodle
-      template:
-        src: roles/moodle/templates/nginx_moodle.conf.j2
+      ansible.builtin.template:
+        src: templates/nginx/moodle.conf.j2
         dest: /etc/nginx/sites-available/moodle.conf
+        owner: root
+        group: root
         mode: "0644"
-      notify: restart services
+      notify: restart nginx
 
     - name: Enable vhost
-      file:
+      ansible.builtin.file:
         src: /etc/nginx/sites-available/moodle.conf
         dest: /etc/nginx/sites-enabled/moodle.conf
         state: link
-      notify: restart services
+        force: yes
+      notify: restart nginx
 
     - name: Disable default vhost
-      file:
+      ansible.builtin.file:
         path: /etc/nginx/sites-enabled/default
         state: absent
-      notify: restart services
+      notify: restart nginx
 
     - name: Render config.php (RDS/EFS)
-      template:
+      ansible.builtin.template:
         src: roles/moodle/templates/config.php.j2
         dest: "{{ moodle_wwwroot }}/config.php"
         owner: "{{ moodle_web_user }}"
         group: "{{ moodle_web_group }}"
         mode: "0640"
-      notify: restart services
-
-    # ← 追加：ALBヘルスチェック用の静的エンドポイント
-    - name: Create static health check endpoint
-      copy:
-        dest: "{{ moodle_wwwroot }}/healthz.html"
-        content: "ok\n"
-        owner: "{{ moodle_web_user }}"
-        group: "{{ moodle_web_group }}"
-        mode: "0644"
+      notify: [restart php-fpm, restart nginx]
 
     - name: Ensure Moodle cron (every minute)
-      cron:
+      ansible.builtin.cron:
         name: "Moodle cron"
         user: "{{ moodle_web_user }}"
         minute: "*"
-        job: "PHP_INI_SCAN_DIR=/etc/php/{{ php_ver.stdout }}/fpm/conf.d php {{ moodle_wwwroot }}/admin/cli/cron.php >/dev/null 2>&1"
+        job: "/usr/bin/php {{ moodle_wwwroot }}/admin/cli/cron.php > /dev/null 2>&1"
+
+    # 参考：DBホストが空なら警告（失敗にはしない）
+    - name: Warn when DB host is empty (non-fatal)
+      ansible.builtin.debug:
+        msg: "WARNING: moodle_db_host が未解決です。SSMや環境変数(MOODLE_DB_HOST)で渡してください。"
+      when: (moodle_db_host | default('')) | length == 0
 
   handlers:
-    - name: restart services
-      block:
-        - name: Restart PHP-FPM
-          service:
-            name: "php{{ php_ver.stdout }}-fpm"
-            state: restarted
-            enabled: true
-        - name: Reload Nginx
-          service:
-            name: nginx
-            state: reloaded
-            enabled: true
+    - name: restart php-fpm
+      ansible.builtin.service:
+        name: "php{{ php_minor }}-fpm"
+        state: started
+        enabled: true
+
+    - name: restart nginx
+      ansible.builtin.service:
+        name: nginx
+        state: started
+        enabled: true

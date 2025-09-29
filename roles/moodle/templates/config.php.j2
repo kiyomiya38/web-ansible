@@ -3,6 +3,10 @@ unset($CFG);
 global $CFG;
 $CFG = new stdClass();
 
+/**
+ * === DB settings (RDS / Aurora) ===
+ * 変数は Ansible から注入されます。
+ */
 $CFG->dbtype    = 'mysqli';
 $CFG->dblibrary = 'native';
 $CFG->dbhost    = '{{ moodle_db_host }}';
@@ -11,17 +15,33 @@ $CFG->dbuser    = '{{ moodle_db_user }}';
 $CFG->dbpass    = '{{ moodle_db_password }}';
 $CFG->prefix    = 'mdl_';
 
+/**
+ * 必要なら dboptions を足します（例: ポート/コレーション 等）
+ * 未指定でも動作します。MySQL 8 固定であればコレーション指定も可。
+ *
+ * $CFG->dboptions = array(
+ *   'dbpersist'   => 0,
+ *   'dbsocket'    => 0,
+ *   'dbport'      => 3306,
+ *   // 'dbcollation' => 'utf8mb4_0900_ai_ci',
+ * );
+ */
+
+/**
+ * === Web / file paths ===
+ */
 $CFG->wwwroot   = '{{ moodle_siteurl }}';
 $CFG->dataroot  = '{{ moodle_datadir }}';
 $CFG->directorypermissions = 02770;
 
 /**
- * Reverse proxy (ALB/NLB) 対応
+ * === Reverse proxy (ALB/NLB) 対応 ===
  * - ALB からの X-Forwarded-* を信頼
  * - TLS 終端が ALB の場合に https として振る舞う
  */
 $CFG->reverseproxy = true;
 $CFG->sslproxy = true;
+/* ALB -> EC2 がプライベート IP の場合に備え、RFC1918 を信頼。必要に応じて絞り込み可。 */
 $CFG->reverseproxyaddresses = ['10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16'];
 
 require_once(__DIR__ . '/lib/setup.php');
