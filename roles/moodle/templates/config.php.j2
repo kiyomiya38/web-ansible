@@ -14,9 +14,9 @@ $CFG->dbuser    = '{{ moodle_db_user }}';
 $CFG->dbpass    = '{{ moodle_db_password | replace('\\', '\\\\') | replace("'", "\\'") }}';
 $CFG->prefix    = 'mdl_';
 $CFG->dboptions = array(
-    'dbport' => 3306,
-    'dbsocket' => false,
-    'dbcollation' => 'utf8mb4_unicode_ci',
+    'dbport'     => 3306,
+    'dbsocket'   => false,
+    'dbcollation'=> 'utf8mb4_unicode_ci',
 );
 
 // --- Paths ---
@@ -24,29 +24,13 @@ $CFG->wwwroot  = '{{ moodle_siteurl }}';
 $CFG->dataroot = '{{ moodle_datadir }}';
 
 // --- Reverse proxy / SSL (ALB) ---
-{# ここで、信頼プロキシCIDRを決定（moodle_trusted_proxy_cidrs が無ければ moodle_vpc_cidr を fallback） #}
-{% set __cidrs = moodle_trusted_proxy_cidrs | default([]) %}
-{% if (__cidrs | length == 0) and (moodle_vpc_cidr is defined) and moodle_vpc_cidr %}
-  {% set __cidrs = [moodle_vpc_cidr] %}
-{% endif %}
+$CFG->reverseproxy = false;
+$CFG->sslproxy     = true;
 
-{% if __cidrs | length > 0 %}
-$CFG->reverseproxy = true;
-$CFG->sslproxy = true;
-$CFG->reverseproxyaddresses = array(
-{% for cidr in __cidrs -%}
-    '{{ cidr }}'{% if not loop.last %},{% endif %}
-{% endfor -%}
-);
-{% else %}
-$CFG->reverseproxy = false;  // 信頼CIDR未指定時は従来通り
-$CFG->sslproxy = true;
-{% endif %}
-
-// Hardening
+// --- Hardening ---
 $CFG->directorypermissions = 0777;
-$CFG->cookiesecure = true;
-$CFG->cookiehttponly = true;
+$CFG->cookiesecure         = true;
+$CFG->cookiehttponly       = true;
 
 // Bootstrap Moodle
 require_once(__DIR__ . '/lib/setup.php');
