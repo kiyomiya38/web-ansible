@@ -32,3 +32,7 @@ moodle_datadir: "/var/moodledata"      # EFS マウントターゲット
 moodle_branch:  "MOODLE_405_STABLE"    # 必要に応じて変更
 moodle_web_user:  "www-data"
 moodle_web_group: "www-data"
+
+moodle_trusted_proxy_cidrs:
+  - "10.81.16.0/20"
+  - "10.81.32.0/20"
